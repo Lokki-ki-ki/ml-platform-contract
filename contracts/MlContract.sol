@@ -4,7 +4,8 @@ pragma solidity ^0.8.0;
 contract MlContract {
     address public oracleAddress;
     address public contractOwner;
-    uint256 public startBlock;
+    uint256 public startTimestamp;
+    uint256 public endTimestamp;
     string private modelAddress;
     string private testDataHash;
     string private testDataLabelHash;
@@ -12,7 +13,10 @@ contract MlContract {
     uint256 public contractStatus; // 1: Submission, 2: Evaluation, 3: Completed
     uint256 public clientDeposit;
     uint256 public platformFeePool;
+    uint256 public depositRequired;
     uint256 public platformFee = 10;
+    uint256 public roundOfTraining;
+    uint256 public startBlockNumber;
 
     // Modifiers
     modifier onlyOracle() {
@@ -45,28 +49,32 @@ contract MlContract {
 
     // ********** Initialize Stage **********
     // Initialize the contract with the address of the oracle / model to train / Hash of the test data
-    constructor (address _oracleAddress, address _contractOwner, string memory _modelAddress, string memory _testDataHash, string memory _testDataLabelHash, ) payable {
+    constructor (address _oracleAddress, address _contractOwner, string memory _modelAddress, string memory _testDataHash, string memory _testDataLabelHash, uint256 _timestamp, uint256 _depositRequired) payable {
         require(msg.value > 100, "Please put deposite.");
         oracleAddress = _oracleAddress;
         contractOwner = _contractOwner; // 
         modelAddress = _modelAddress;
         testDataHash = _testDataHash;
         testDataLabelHash = _testDataLabelHash;
-        startBlock = block.number;
+        startTimestamp = block.timestamp;
+        endTimestamp = _timestamp;
         rewardPool = msg.value; // wei
         clientDeposit = 0;
         contractStatus = 1;
+        depositRequired = _depositRequired;
+        roundOfTraining = 1;
+        startBlockNumber = block.number;
     }
 
     // Events for off-chain oracles to listen to
-    event StartEvent(uint256 requestId, uint256 rewardPool);
+    event StartEvent(uint256 requestId, uint256 _rewardPool);
     event EndEvent(uint256 requestId);
     event ComputationRequestSingle(uint256 _requestId, uint256 _clientId, string _weightsAddress, uint256 _currentReputation);
     event ComputationRequestTest(uint256 _requestId, string _modelAddress, string _testDataAddress, string _testLabelAddress, string _testDataHash, string _testLabelHash);
     event ComputationProvided(uint256 _requestId);
     event SubmissionDone(uint256 _clientId, string _weightsAddress, uint256 _reputation, uint256 _block);
-    event RewardPaid(uint256 _clientId, uint256 _reward);
-    event DepositReturned(uint256 _clientId, uint256 _deposit);
+    event RewardPaid(uint256 _clientId, uint256 _reward, uint256 _roundOfTraining, address _clientAddress);
+    event DepositReturned(uint256 _clientId, uint256 _deposit, uint256 _roundOfTraining, address _clientAddress);
 
     // Mapping to store the data requested by the client
     mapping(uint256 => address) public clientIdToAddress;
@@ -82,7 +90,8 @@ contract MlContract {
     // ********** Client Submission Stage **********
     // Function for the client to submit their weights
     function submitWeights(string memory weightsAddress) public payable onlySubmission {
-        require(msg.value > 100, "Please put deposite at least 100 wei.");
+        require(msg.value >= depositRequired, "Please put deposite enough wei according to the contract.");
+        require(block.timestamp <= endTimestamp, "The submission period has ended.");
         platformFeePool += platformFee;
         uint256 deposit = msg.value - platformFee;
         clientDeposit += deposit;
@@ -108,11 +117,13 @@ contract MlContract {
     function startEvaluation(string memory testDataAddress, string memory testDataLabelAddress) public onlyParticipants onlySubmission {
         require(contractStatus == 1, "The contract evaluation stage has been started.");
         if (msg.sender == contractOwner || msg.sender == oracleAddress) {
-            require(block.number > startBlock + 10, "The submission period has not ended yet.");
+            require(block.timestamp >= endTimestamp, "The submission period has not ended yet.");
         } else {
-            require(block.number > startBlock + 15, "The participants can only call this function after 15 blocks if the owner has not called it.");
+            // One day is 86400
+            require(block.timestamp >= endTimestamp + 86400, "The participants can only call this function after 1 day if the owner has not called it.");
             require(addressToClientId[msg.sender] != 0, "Only the client can call this function.");
         }
+        
         contractStatus = 2;
         // Request data from the oracle
         requestDataFromOracle(testDataAddress, testDataLabelAddress);
@@ -153,19 +164,23 @@ contract MlContract {
         rewardPool -= reward;
         // Test with 1 wei
         payable(clientIdToAddress[clientId]).transfer(reward * 1 wei);
-        emit RewardPaid(clientId, reward);
+        emit RewardPaid(clientId, reward, roundOfTraining, clientIdToAddress[clientId]);
         payable(clientIdToAddress[clientId]).transfer(clientIdDeposit[clientId]);
         clientIdDeposit[clientId] = 0;
-        emit DepositReturned(clientId, clientIdDeposit[clientId]);
+        emit DepositReturned(clientId, clientIdDeposit[clientId], roundOfTraining, clientIdToAddress[clientId]);
     }
 
     // ********** Completion Stage **********
     // Function to start the next round
-    function startNextRound() public payable onlyCompleted onlyOwner {
+    function startNextRound(uint256 nextTimestamp, string memory _testDataHash, string memory _testDataLabelHash) public payable onlyCompleted onlyOwner {
         require(msg.value > 0, "Please put deposite.");
         rewardPool = msg.value;
         contractStatus = 1;
-        startBlock = block.number;
+        startTimestamp = block.timestamp;
+        endTimestamp = nextTimestamp;
+        roundOfTraining++;
+        testDataHash = _testDataHash;
+        testDataLabelHash = _testDataLabelHash;
     }
 
     // ********** Other Functions **********
@@ -185,6 +200,18 @@ contract MlContract {
     //Function to refund the reward pool
     function increaseReward() public payable onlyOwner {
         rewardPool += msg.value;
+    }
+
+    //Function for platform owner to withdraw the platform fee
+    function withdrawPlatformFee() public onlyOracle {
+        require(platformFeePool > 0, "No platform fee to withdraw.");
+        payable(oracleAddress).transfer(platformFeePool);
+        platformFeePool = 0;
+    }
+
+    //Function to get the client id by address
+    function getClientIdByAddress() public view returns (uint256) {
+        return addressToClientId[msg.sender];
     }
 
 }

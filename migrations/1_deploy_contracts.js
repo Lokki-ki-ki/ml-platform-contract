@@ -12,7 +12,6 @@
 // };
 
 const MlPlatformFactory = artifacts.require("MlPlatformFactory");
-
 module.exports = function(deployer, network, accounts) {
   // print the accounts
   console.log(accounts[0]);
@@ -22,5 +21,7 @@ module.exports = function(deployer, network, accounts) {
   // const _testDataHash = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
   // const _testLabelHash = '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
   // const _modelAddress = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
-  deployer.deploy(MlPlatformFactory, { from : accounts[9]});
+  deployer.deploy(MlPlatformFactory, { from : accounts[9] });
+  
+//   runPythonScript('/Users/lokki/Downloads/FYP/fyp_project/ml-platform-contract/updateFile.py');
 };
